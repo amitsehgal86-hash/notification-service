@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notification Service</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Menlo', 'Monaco', 'Consolas', monospace; }
+    .spinner { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .bar { transition: width 0.6s ease; }
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-white tracking-tight">Notification Service</span>
+        <span class="text-xs bg-emerald-900/60 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded">v1.0.0</span>
+        <span class="text-xs text-slate-500">FDCPA-compliant · embedded PostgreSQL</span>
+      </div>
+      <div class="flex items-center gap-6 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+          <span class="text-slate-400">LIVE</span>
+        </div>
+        <div class="flex items-center gap-4 text-slate-300">
+          <span>Consumers: <span id="stat-consumers" class="text-white font-bold">—</span></span>
+          <span>Notifications: <span id="stat-notifs" class="text-white font-bold">—</span></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+    <!-- Pipeline Flow -->
+    <section>
+      <h2 class="text-xs uppercase tracking-widest text-slate-500 mb-4">Processing Pipeline</h2>
+      <div class="grid grid-cols-5 gap-0 items-stretch">
+
+        <!-- Step 1 -->
+        <div class="bg-slate-900 border border-slate-700 rounded-l-lg p-4">
+          <div class="text-xs text-slate-500 mb-1">Step 1</div>
+          <div class="text-sm font-bold text-blue-400 mb-1">Opt-out Check</div>
+          <div class="text-xs text-slate-400">Synchronous read from consumer_preferences. FDCPA-critical — no eventual consistency.</div>
+          <div class="mt-2 text-xs text-slate-600">→ DB read</div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="hidden"></div>
+
+        <!-- Step 2 — highlighted -->
+        <div class="bg-amber-950/40 border-2 border-amber-600 rounded-none p-4 relative -mx-px z-10">
+          <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-600 text-amber-950 text-xs font-bold px-2 py-0.5 rounded">KEY DESIGN</div>
+          <div class="text-xs text-amber-500/70 mb-1">Step 2</div>
+          <div class="text-sm font-bold text-amber-400 mb-1">3-Day Suppression</div>
+          <div class="text-xs text-slate-300">Do not contact a consumer if already reached in the last 3 days (any channel).</div>
+          <div class="mt-2 text-xs text-amber-600 font-mono">SELECT EXISTS (... status IN ('SENT','DELIVERED') AND sent_at &gt; :since)</div>
+          <div class="mt-1 text-xs text-amber-500/70">↳ partial composite index → O(log n) at 1M+ rows</div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="bg-slate-900 border border-slate-700 rounded-none p-4">
+          <div class="text-xs text-slate-500 mb-1">Step 3</div>
+          <div class="text-sm font-bold text-violet-400 mb-1">FDCPA Window</div>
+          <div class="text-xs text-slate-400">Contact only 08:00–21:00 in the consumer's local timezone. HELD if outside window.</div>
+          <div class="mt-2 text-xs text-slate-600">→ no DB</div>
+        </div>
+
+        <!-- Step 4+5 -->
+        <div class="bg-slate-900 border border-slate-700 rounded-r-lg p-4">
+          <div class="text-xs text-slate-500 mb-1">Steps 4–5</div>
+          <div class="text-sm font-bold text-emerald-400 mb-1">Render &amp; Send</div>
+          <div class="text-xs text-slate-400">Template render → mini-Miranda validation (FDCPA) → simulated Twilio / SendGrid send.</div>
+          <div class="mt-2 text-xs text-slate-600">→ transactional outbox</div>
+        </div>
+
+      </div>
+
+      <!-- Index callout -->
+      <div class="mt-4 bg-slate-900 border border-amber-800/50 rounded-lg p-4 flex gap-4 items-start">
+        <span class="text-amber-500 text-lg mt-0.5">⚡</span>
+        <div>
+          <span class="text-amber-400 font-bold text-sm">Suppression index design: </span>
+          <span class="text-slate-300 text-sm font-mono">CREATE INDEX idx_notifications_recent_contact ON notifications (tenant_id, consumer_id, sent_at DESC) WHERE status IN ('SENT', 'DELIVERED')</span>
+          <div class="text-xs text-slate-500 mt-1">Partial index — only indexes rows that matter. Composite order matches the query exactly: tenant → consumer → recency. Postgres satisfies the EXISTS with an index-only scan.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls + Timing -->
+    <div class="grid grid-cols-2 gap-6">
+
+      <!-- Demo Controls -->
+      <section class="bg-slate-900 border border-slate-700 rounded-lg p-6 space-y-6">
+        <h2 class="text-xs uppercase tracking-widest text-slate-500">Demo Controls</h2>
+
+        <!-- Seed -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-bold text-white">Seed Consumer Data</div>
+              <div class="text-xs text-slate-400">Bulk-insert 1M consumers + 30% with recent history via PostgreSQL generate_series</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <input id="seed-count" type="number" value="1000000" min="1000" step="100000"
+              class="w-36 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-amber-500">
+            <button id="btn-seed" onclick="runSeed()"
+              class="bg-amber-600 hover:bg-amber-500 text-black font-bold px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              Seed
+            </button>
+          </div>
+          <div id="seed-result" class="hidden text-xs rounded bg-slate-800 border border-slate-700 p-3 space-y-1"></div>
+        </div>
+
+        <div class="border-t border-slate-800"></div>
+
+        <!-- Load Test -->
+        <div class="space-y-3">
+          <div>
+            <div class="text-sm font-bold text-white">Run Load Test</div>
+            <div class="text-xs text-slate-400">Push N notifications through the full pipeline. Uses seeded consumers.</div>
+          </div>
+          <div class="flex items-center gap-3">
+            <input id="load-count" type="number" value="50000" min="100" step="10000"
+              class="w-36 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+            <button id="btn-load" onclick="runLoad()"
+              class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              Run
+            </button>
+          </div>
+          <div id="load-status" class="hidden text-xs text-slate-400"></div>
+        </div>
+      </section>
+
+      <!-- Query Timing -->
+      <section class="bg-slate-900 border border-slate-700 rounded-lg p-6 space-y-5">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xs uppercase tracking-widest text-slate-500">Query Timing</h2>
+          <button onclick="refreshTiming()"
+            class="text-xs text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 px-2 py-1 rounded transition-colors">
+            ↻ Refresh
+          </button>
+        </div>
+
+        <div class="text-xs text-slate-500 italic" id="timing-note">Run a load test to populate timing data.</div>
+
+        <!-- Suppression DB Query -->
+        <div id="timing-block" class="hidden space-y-4">
+          <div class="bg-amber-950/30 border border-amber-800/60 rounded-lg p-4">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <div class="text-xs text-amber-500 uppercase tracking-wider">Suppression DB Query</div>
+                <div class="text-xs text-slate-500 font-mono mt-0.5">notification.suppression.query.db</div>
+              </div>
+              <div class="text-right">
+                <div class="text-2xl font-bold text-amber-400" id="t-db-avg">—</div>
+                <div class="text-xs text-slate-500">avg ms</div>
+              </div>
+            </div>
+            <div class="flex gap-6 text-xs text-slate-400">
+              <span>max: <span id="t-db-max" class="text-slate-200">—</span> ms</span>
+              <span>calls: <span id="t-db-count" class="text-slate-200">—</span></span>
+            </div>
+          </div>
+
+          <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <div class="text-xs text-violet-400 uppercase tracking-wider">Suppression Check (incl. service layer)</div>
+                <div class="text-xs text-slate-500 font-mono mt-0.5">notification.suppression.check</div>
+              </div>
+              <div class="text-right">
+                <div class="text-2xl font-bold text-violet-300" id="t-check-avg">—</div>
+                <div class="text-xs text-slate-500">avg ms</div>
+              </div>
+            </div>
+            <div class="flex gap-6 text-xs text-slate-400">
+              <span>max: <span id="t-check-max" class="text-slate-200">—</span> ms</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
+            <div class="flex justify-between items-start mb-2">
+              <div>
+                <div class="text-xs text-slate-400 uppercase tracking-wider">Full Orchestrator (end-to-end)</div>
+                <div class="text-xs text-slate-500 font-mono mt-0.5">notification.process</div>
+              </div>
+              <div class="text-right">
+                <div class="text-2xl font-bold text-slate-200" id="t-proc-avg">—</div>
+                <div class="text-xs text-slate-500">avg ms</div>
+              </div>
+            </div>
+            <div class="flex gap-6 text-xs text-slate-400">
+              <span>max: <span id="t-proc-max" class="text-slate-200">—</span> ms</span>
+              <span>calls: <span id="t-proc-count" class="text-slate-200">—</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Load Test Results -->
+    <section id="results-section" class="hidden bg-slate-900 border border-slate-700 rounded-lg p-6 space-y-5">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs uppercase tracking-widest text-slate-500">Load Test Results</h2>
+        <div id="throughput-badge" class="text-sm font-bold text-emerald-400 bg-emerald-950/50 border border-emerald-800 px-3 py-1 rounded-full"></div>
+      </div>
+
+      <div class="grid grid-cols-5 gap-3" id="outcome-cards"></div>
+
+      <div class="space-y-2" id="outcome-bars"></div>
+
+      <div class="text-xs text-slate-500" id="result-meta"></div>
+    </section>
+
+    <!-- Recent Sends -->
+    <section class="bg-slate-900 border border-slate-700 rounded-lg p-6 space-y-5">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="text-xs uppercase tracking-widest text-slate-500">Recent Sends — DB Query Inspector</h2>
+          <p class="text-xs text-slate-500 mt-1">Measures the raw time to fetch rows from the notifications table at scale.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">Rows:</label>
+          <select id="sends-limit"
+            class="bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-sky-500">
+            <option value="10">10</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="500">500</option>
+          </select>
+          <button id="btn-sends" onclick="fetchRecentSends()"
+            class="bg-sky-700 hover:bg-sky-600 text-white font-bold px-4 py-1.5 rounded text-sm transition-colors">
+            Fetch
+          </button>
+        </div>
+      </div>
+
+      <!-- Query metadata bar -->
+      <div id="sends-meta" class="hidden">
+        <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 flex flex-wrap gap-6 items-center mb-4">
+          <div class="text-center">
+            <div class="text-2xl font-bold text-sky-400" id="sends-query-ms">—</div>
+            <div class="text-xs text-slate-500 mt-0.5">query ms</div>
+          </div>
+          <div class="text-center">
+            <div class="text-2xl font-bold text-white" id="sends-rows">—</div>
+            <div class="text-xs text-slate-500 mt-0.5">rows fetched</div>
+          </div>
+          <div class="text-center">
+            <div class="text-2xl font-bold text-slate-300" id="sends-table-total">—</div>
+            <div class="text-xs text-slate-500 mt-0.5">total in table</div>
+          </div>
+          <div class="text-center">
+            <div class="text-lg font-bold text-slate-300" id="sends-kb">—</div>
+            <div class="text-xs text-slate-500 mt-0.5">est. data size</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs text-slate-500 mb-1">SQL</div>
+            <div class="font-mono text-xs text-amber-400/80 bg-slate-900 border border-slate-700 rounded px-3 py-2 overflow-x-auto whitespace-nowrap" id="sends-sql"></div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto rounded-lg border border-slate-700">
+          <table class="w-full text-xs">
+            <thead class="bg-slate-800 text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th class="px-4 py-2 text-left">Sent At</th>
+                <th class="px-4 py-2 text-left">Channel</th>
+                <th class="px-4 py-2 text-left">Status</th>
+                <th class="px-4 py-2 text-left">Consumer ID</th>
+                <th class="px-4 py-2 text-left">Notification ID</th>
+              </tr>
+            </thead>
+            <tbody id="sends-tbody" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="sends-empty" class="text-xs text-slate-500 italic">Click Fetch to query the notifications table and see the raw DB timing.</div>
+    </section>
+
+  </main>
+
+<script>
+const DEMO_TENANT = '00000000-0000-0000-0000-000000000001';
+
+function fmt(n) { return Number(n).toLocaleString(); }
+function fmtMs(n) { return n < 0.01 ? '<0.01' : n.toFixed(2); }
+
+// ── Stats bar ──────────────────────────────────────────────────────────────
+async function refreshStats() {
+  try {
+    const r = await fetch(`/internal/stats?tenantId=${DEMO_TENANT}`);
+    const d = await r.json();
+    document.getElementById('stat-consumers').textContent = fmt(d.consumers);
+    document.getElementById('stat-notifs').textContent = fmt(d.notifications);
+  } catch (_) {}
+}
+refreshStats();
+setInterval(refreshStats, 3000);
+
+// ── Timing ─────────────────────────────────────────────────────────────────
+async function refreshTiming() {
+  try {
+    const r = await fetch('/internal/timing');
+    const d = await r.json();
+    const db = d.suppression_db_query;
+    const ch = d.suppression_check;
+    const pr = d.orchestrator;
+    if (pr.count === 0) return;
+
+    document.getElementById('timing-note').classList.add('hidden');
+    document.getElementById('timing-block').classList.remove('hidden');
+
+    document.getElementById('t-db-avg').textContent   = fmtMs(db.avg_ms);
+    document.getElementById('t-db-max').textContent   = fmtMs(db.max_ms);
+    document.getElementById('t-db-count').textContent = fmt(db.count);
+    document.getElementById('t-check-avg').textContent = fmtMs(ch.avg_ms);
+    document.getElementById('t-check-max').textContent = fmtMs(ch.max_ms);
+    document.getElementById('t-proc-avg').textContent  = fmtMs(pr.avg_ms);
+    document.getElementById('t-proc-max').textContent  = fmtMs(pr.max_ms);
+    document.getElementById('t-proc-count').textContent = fmt(pr.count);
+  } catch (_) {}
+}
+refreshTiming();
+
+// ── Seed ───────────────────────────────────────────────────────────────────
+async function runSeed() {
+  const btn = document.getElementById('btn-seed');
+  const out = document.getElementById('seed-result');
+  const count = document.getElementById('seed-count').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner">⟳</span> Seeding…';
+  out.className = 'text-xs rounded bg-slate-800 border border-slate-700 p-3 space-y-1';
+  out.innerHTML = '<div class="text-slate-400">Bulk-inserting via PostgreSQL generate_series — this may take a minute…</div>';
+  out.classList.remove('hidden');
+
+  try {
+    const r = await fetch(`/internal/seed?consumers=${count}`, { method: 'POST' });
+    const d = await r.json();
+    out.innerHTML = `
+      <div class="flex gap-6 flex-wrap">
+        <span class="text-slate-400">consumers inserted: <span class="text-white font-bold">${fmt(d.consumersInserted)}</span></span>
+        <span class="text-slate-400">total: <span class="text-white font-bold">${fmt(d.consumersTotal)}</span></span>
+        <span class="text-slate-400">history rows: <span class="text-white font-bold">${fmt(d.historyRowsInserted)}</span></span>
+        <span class="text-slate-400">elapsed: <span class="text-emerald-400 font-bold">${fmt(d.elapsedMs)} ms</span></span>
+      </div>`;
+    refreshStats();
+  } catch (e) {
+    out.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Seed';
+}
+
+// ── Load Test ──────────────────────────────────────────────────────────────
+const OUTCOME_COLORS = {
+  sent:           { label: 'Sent',           bg: 'bg-emerald-900/60', border: 'border-emerald-700', text: 'text-emerald-400', bar: 'bg-emerald-500' },
+  suppressed_3day:{ label: 'Suppressed',     bg: 'bg-amber-900/40',  border: 'border-amber-700',   text: 'text-amber-400',   bar: 'bg-amber-500' },
+  held_outside_window:{ label: 'FDCPA Hold', bg: 'bg-violet-900/40', border: 'border-violet-700',  text: 'text-violet-400',  bar: 'bg-violet-500' },
+  opted_out:      { label: 'Opted Out',      bg: 'bg-slate-800',     border: 'border-slate-600',   text: 'text-slate-300',   bar: 'bg-slate-500' },
+  failed:         { label: 'Failed',         bg: 'bg-red-950/40',    border: 'border-red-800',     text: 'text-red-400',     bar: 'bg-red-600' },
+};
+
+async function runLoad() {
+  const btn = document.getElementById('btn-load');
+  const status = document.getElementById('load-status');
+  const count = document.getElementById('load-count').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner">⟳</span> Running…';
+  status.textContent = `Processing ${Number(count).toLocaleString()} notifications through the pipeline…`;
+  status.classList.remove('hidden');
+
+  try {
+    const r = await fetch(`/internal/demo/load?count=${count}`, { method: 'POST' });
+    const d = await r.json();
+    showResults(d);
+    await refreshTiming();
+    refreshStats();
+    status.classList.add('hidden');
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Run';
+}
+
+function showResults(d) {
+  const section = document.getElementById('results-section');
+  section.classList.remove('hidden');
+
+  document.getElementById('throughput-badge').textContent =
+    `${fmt(Math.round(d.throughputPerSec))} notifications/sec  ·  ${fmt(d.elapsedMs)} ms total`;
+
+  const keys = ['sent', 'suppressed_3day', 'held_outside_window', 'opted_out', 'failed'];
+  const total = d.processed || d.requested;
+
+  // Cards
+  const cards = document.getElementById('outcome-cards');
+  cards.innerHTML = keys.map(k => {
+    const c = OUTCOME_COLORS[k];
+    const n = d[k] || 0;
+    const pct = total > 0 ? ((n / total) * 100).toFixed(1) : '0.0';
+    return `
+      <div class="${c.bg} border ${c.border} rounded-lg p-4">
+        <div class="text-xs ${c.text} uppercase tracking-wider mb-1">${c.label}</div>
+        <div class="text-2xl font-bold text-white">${fmt(n)}</div>
+        <div class="text-xs text-slate-500">${pct}%</div>
+      </div>`;
+  }).join('');
+
+  // Bars
+  const bars = document.getElementById('outcome-bars');
+  bars.innerHTML = keys.map(k => {
+    const c = OUTCOME_COLORS[k];
+    const n = d[k] || 0;
+    const pct = total > 0 ? (n / total) * 100 : 0;
+    return `
+      <div class="flex items-center gap-3 text-xs">
+        <span class="${c.text} w-28 text-right shrink-0">${c.label}</span>
+        <div class="flex-1 bg-slate-800 rounded-full h-3 overflow-hidden">
+          <div class="${c.bar} h-3 rounded-full bar" style="width:${pct}%"></div>
+        </div>
+        <span class="text-slate-300 w-16 shrink-0">${fmt(n)}</span>
+      </div>`;
+  }).join('');
+
+  document.getElementById('result-meta').textContent =
+    `Requested: ${fmt(d.requested)}  ·  Processed: ${fmt(d.processed)}  ·  Threads: 16`;
+}
+
+// ── Recent Sends ───────────────────────────────────────────────────────────
+const STATUS_BADGE = {
+  SENT:      'bg-blue-900/50 text-blue-300 border-blue-700',
+  DELIVERED: 'bg-emerald-900/50 text-emerald-300 border-emerald-700',
+  FAILED:    'bg-red-900/50 text-red-300 border-red-700',
+};
+
+function fmtTs(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+async function fetchRecentSends() {
+  const btn = document.getElementById('btn-sends');
+  const limit = document.getElementById('sends-limit').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner">⟳</span>';
+
+  try {
+    const r = await fetch(`/internal/recent-sends?limit=${limit}`);
+    const d = await r.json();
+
+    document.getElementById('sends-empty').classList.add('hidden');
+    document.getElementById('sends-meta').classList.remove('hidden');
+
+    document.getElementById('sends-query-ms').textContent = fmtMs(d.query_ms);
+    document.getElementById('sends-rows').textContent = fmt(d.rows_fetched);
+    document.getElementById('sends-table-total').textContent = fmt(d.table_total_notifications);
+    document.getElementById('sends-sql').textContent = d.sql;
+
+    // Rough estimate: avg notification row ~180 bytes (4 UUIDs + timestamps + enums + overhead)
+    const estBytes = d.rows_fetched * 180;
+    document.getElementById('sends-kb').textContent = fmtSize(estBytes);
+
+    const tbody = document.getElementById('sends-tbody');
+    tbody.innerHTML = d.data.map((row, i) => {
+      const badge = STATUS_BADGE[row.status] || 'bg-slate-800 text-slate-300 border-slate-600';
+      const bg = i % 2 === 0 ? 'bg-slate-900' : 'bg-slate-800/30';
+      return `
+        <tr class="${bg} hover:bg-slate-800/60 transition-colors">
+          <td class="px-4 py-2 text-slate-300 whitespace-nowrap">${fmtTs(row.sent_at)}</td>
+          <td class="px-4 py-2 text-slate-200">${row.channel}</td>
+          <td class="px-4 py-2">
+            <span class="border rounded px-1.5 py-0.5 text-xs ${badge}">${row.status}</span>
+          </td>
+          <td class="px-4 py-2 text-slate-500 font-mono">${String(row.consumer_id).slice(0, 8)}…</td>
+          <td class="px-4 py-2 text-slate-500 font-mono">${String(row.id).slice(0, 8)}…</td>
+        </tr>`;
+    }).join('');
+
+  } catch (e) {
+    document.getElementById('sends-empty').textContent = `Error: ${e.message}`;
+    document.getElementById('sends-empty').classList.remove('hidden');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Fetch';
+}
+</script>
+</body>
+</html>

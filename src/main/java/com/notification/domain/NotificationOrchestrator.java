@@ -18,6 +18,8 @@ import com.notification.model.NotificationRequest;
 import com.notification.model.NotificationStatus;
 import com.notification.model.ProcessOutcome;
 import com.notification.model.Template;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs a single notification through the compliance/business gates, in order:
@@ -56,6 +59,8 @@ public class NotificationOrchestrator {
     private final NotificationProperties props;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final Timer processTimer;
+    private final Timer suppressionCheckTimer;
 
     public NotificationOrchestrator(ConsumerPreferenceRepository preferenceRepository,
                                     NotificationRepository notificationRepository,
@@ -68,7 +73,8 @@ public class NotificationOrchestrator {
                                     SenderRegistry senderRegistry,
                                     NotificationProperties props,
                                     ObjectMapper objectMapper,
-                                    Clock clock) {
+                                    Clock clock,
+                                    MeterRegistry meterRegistry) {
         this.preferenceRepository = preferenceRepository;
         this.notificationRepository = notificationRepository;
         this.templateRepository = templateRepository;
@@ -81,10 +87,21 @@ public class NotificationOrchestrator {
         this.props = props;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.processTimer = meterRegistry.timer("notification.process");
+        this.suppressionCheckTimer = meterRegistry.timer("notification.suppression.check");
     }
 
     @Transactional
     public ProcessOutcome process(NotificationRequest req) {
+        long start = System.nanoTime();
+        try {
+            return doProcess(req);
+        } finally {
+            processTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    private ProcessOutcome doProcess(NotificationRequest req) {
         UUID tenantId = req.tenantId();
         UUID consumerId = req.consumerId();
         Instant now = clock.instant();
@@ -104,7 +121,10 @@ public class NotificationOrchestrator {
         }
 
         // Step 1.5: 3-day contact-suppression rule (core requirement).
-        if (suppressionService.isSuppressed(tenantId, consumerId, now)) {
+        long suppStart = System.nanoTime();
+        boolean suppressed = suppressionService.isSuppressed(tenantId, consumerId, now);
+        suppressionCheckTimer.record(System.nanoTime() - suppStart, TimeUnit.NANOSECONDS);
+        if (suppressed) {
             notificationRepository.updateStatus(req.notificationId(), NotificationStatus.SUPPRESSED);
             return ProcessOutcome.SUPPRESSED;
         }

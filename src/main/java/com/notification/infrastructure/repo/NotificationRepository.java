@@ -3,6 +3,8 @@ package com.notification.infrastructure.repo;
 import com.notification.model.Channel;
 import com.notification.model.Notification;
 import com.notification.model.NotificationStatus;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -14,14 +16,17 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Repository
 public class NotificationRepository {
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final Timer suppressionDbTimer;
 
-    public NotificationRepository(NamedParameterJdbcTemplate jdbc) {
+    public NotificationRepository(NamedParameterJdbcTemplate jdbc, MeterRegistry meterRegistry) {
         this.jdbc = jdbc;
+        this.suppressionDbTimer = meterRegistry.timer("notification.suppression.query.db");
     }
 
     /** Result of an idempotent insert: the row id, and whether we created it (vs. found an existing one). */
@@ -135,6 +140,7 @@ public class NotificationRepository {
      * The 3-day rule's core query: has this consumer been contacted (SENT/DELIVERED) within the window?
      */
     public boolean wasContactedSince(UUID tenantId, UUID consumerId, Instant since) {
+        long start = System.nanoTime();
         Boolean exists = jdbc.queryForObject("""
                 SELECT EXISTS (
                     SELECT 1 FROM notifications
@@ -147,7 +153,25 @@ public class NotificationRepository {
                 .addValue("tenantId", tenantId)
                 .addValue("consumerId", consumerId)
                 .addValue("since", toOdt(since)), Boolean.class);
+        suppressionDbTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
         return Boolean.TRUE.equals(exists);
+    }
+
+    /**
+     * Returns the most recently sent/delivered notifications for a tenant, ordered by sent_at DESC.
+     * Uses the partial composite index (status IN ('SENT','DELIVERED')) for the filter,
+     * then sorts by sent_at. Demonstrates query performance at large table sizes.
+     */
+    public List<Notification> listRecentSends(UUID tenantId, int limit) {
+        return jdbc.query("""
+                SELECT * FROM notifications
+                WHERE tenant_id = :tenantId
+                  AND status IN ('SENT', 'DELIVERED')
+                ORDER BY sent_at DESC
+                LIMIT :limit
+                """, new MapSqlParameterSource()
+                .addValue("tenantId", tenantId)
+                .addValue("limit", limit), MAPPER);
     }
 
     /** Simple filtered listing for GET /v1/notifications. */
