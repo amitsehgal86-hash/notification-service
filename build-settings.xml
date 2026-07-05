@@ -2,11 +2,10 @@
 <!--
   Project-local Maven settings for building this app anywhere (plug-and-play).
 
-  All of this app's dependencies (Spring Boot, Zonky embedded-postgres, Flyway, PostgreSQL
-  driver, jjwt) are public and live on Maven Central. This settings file mirrors ALL
-  repositories to Maven Central so the build:
-    * does not depend on any corporate/private mirror, and
-    * never pays the slow "try private mirror, 403/404, then fall back" penalty.
+  All dependencies are public and live on Maven Central. This settings file mirrors ALL
+  repositories directly to Maven Central so the build:
+    * does not depend on any environment-specific mirror, and
+    * never pays the slow "try mirror, 403/404, then fall back" penalty.
 
   Build with:   mvn -s build-settings.xml clean package
 -->

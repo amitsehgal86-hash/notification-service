@@ -17,7 +17,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Two threads racing to release the same HELD rows. FOR UPDATE SKIP LOCKED must guarantee each row
@@ -67,6 +66,5 @@ class ClaimHeldConcurrencyIT extends AbstractIntegrationTest {
         Set<UUID> distinct = new HashSet<>(claimed);
         assertEquals(rows, distinct.size(), "every HELD row should be claimed once");
         assertEquals(claimed.size(), distinct.size(), "no row should be claimed twice");
-        assertTrue(distinct.size() == rows);
     }
 }

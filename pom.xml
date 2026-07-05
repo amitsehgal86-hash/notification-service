@@ -30,10 +30,10 @@
     </properties>
 
     <!--
-      IMPORTANT: ~/.m2/settings.xml redefines the `central` repo id to point at
-      artifactory.brinqa.com, which 403s Spring Boot artifacts. We therefore declare
-      Maven Central under a DISTINCT id (`maven-central`) so Spring Boot + Zonky resolve.
-      Do NOT reuse the id `central`.
+      A project-local settings file (build-settings.xml) is included because some Maven
+      environments override the central mirror. Declaring Maven Central under a distinct id
+      (`maven-central`) ensures Spring Boot + Zonky resolve directly from Maven Central
+      regardless of the local ~/.m2/settings.xml. Do NOT reuse the id `central`.
     -->
     <repositories>
         <repository>
@@ -117,7 +117,6 @@
             <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
         </dependency>
 
-        <!-- JWT (dev tenant token) -->
         <!-- Terminal UI (bundled in the same JAR; launched via `java -jar ... tui`) -->
         <dependency>
             <groupId>com.googlecode.lanterna</groupId>
@@ -125,6 +124,7 @@
             <version>${lanterna.version}</version>
         </dependency>
 
+        <!-- JWT (dev tenant token) -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>

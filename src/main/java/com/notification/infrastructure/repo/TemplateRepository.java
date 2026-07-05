@@ -36,11 +36,6 @@ public class TemplateRepository {
         return rows.stream().findFirst();
     }
 
-    public List<Template> findByTenant(UUID tenantId) {
-        return jdbc.query("SELECT * FROM templates WHERE tenant_id = :t ORDER BY created_at",
-                new MapSqlParameterSource().addValue("t", tenantId), MAPPER);
-    }
-
     /** Idempotent insert scoped to (tenant_id, name). Returns the id (new or existing). */
     public UUID insertIfAbsent(UUID tenantId, String name, Channel channel, String body, boolean requiresMiranda) {
         var params = new MapSqlParameterSource()

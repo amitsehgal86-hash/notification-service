@@ -10,7 +10,4 @@ public record SendResult(String providerMessageId, boolean accepted, String erro
         return new SendResult(providerMessageId, true, null);
     }
 
-    public static SendResult rejected(String error) {
-        return new SendResult(null, false, error);
-    }
 }

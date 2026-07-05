@@ -1,13 +1,11 @@
 package com.notification.api;
 
-import com.notification.api.dto.OptOutRequest;
 import com.notification.infrastructure.repo.ConsumerPreferenceRepository;
 import com.notification.model.ConsumerPreferences;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -28,7 +26,7 @@ public class ConsumerController {
 
     /** Synchronous strong write — opt-out is FDCPA-critical, no eventual consistency. */
     @PostMapping("/{id}/opt-out")
-    public Map<String, Object> optOut(@PathVariable("id") UUID consumerId, @RequestBody(required = false) OptOutRequest req) {
+    public Map<String, Object> optOut(@PathVariable("id") UUID consumerId) {
         UUID tenantId = TenantContext.require();
         Instant now = Instant.now();
         boolean updated = preferenceRepository.optOut(tenantId, consumerId, "PORTAL", now);

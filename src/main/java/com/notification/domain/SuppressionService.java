@@ -24,11 +24,6 @@ public class SuppressionService {
         this.props = props;
     }
 
-    public boolean isSuppressed(UUID tenantId, UUID consumerId) {
-        return isSuppressed(tenantId, consumerId, Instant.now());
-    }
-
-    /** Overload with an explicit "now" for deterministic tests. */
     public boolean isSuppressed(UUID tenantId, UUID consumerId, Instant now) {
         Instant since = now.minus(Duration.ofDays(props.getSuppression().getWindowDays()));
         return notificationRepository.wasContactedSince(tenantId, consumerId, since);
