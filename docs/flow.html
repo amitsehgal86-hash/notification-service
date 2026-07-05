@@ -1,0 +1,286 @@
+<title>Notification Service — Flow</title>
+<style>
+  :root {
+    --bg:#f5f7f9; --surface:#ffffff; --surface-2:#eef1f5; --ink:#1b2330;
+    --muted:#5c6675; --border:#dde2ea; --accent:#0d8f89; --spine:#b7c0cd;
+    --sent:#12a56f; --suppressed:#b9860f; --held:#3f74e6; --failed:#d6483d;
+    --sent-bg:#e7f6ef; --suppressed-bg:#f8f0d8; --held-bg:#e8effd; --failed-bg:#fbe9e7;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0e131a; --surface:#161d26; --surface-2:#1c2531; --ink:#e7ebf2;
+      --muted:#98a3b2; --border:#28323f; --accent:#3ec7c2; --spine:#39485a;
+      --sent:#2bd08c; --suppressed:#e6bf46; --held:#6d9bff; --failed:#f0655b;
+      --sent-bg:#0f241c; --suppressed-bg:#241f0f; --held-bg:#121c30; --failed-bg:#2a1512;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#f5f7f9; --surface:#ffffff; --surface-2:#eef1f5; --ink:#1b2330;
+    --muted:#5c6675; --border:#dde2ea; --accent:#0d8f89; --spine:#b7c0cd;
+    --sent:#12a56f; --suppressed:#b9860f; --held:#3f74e6; --failed:#d6483d;
+    --sent-bg:#e7f6ef; --suppressed-bg:#f8f0d8; --held-bg:#e8effd; --failed-bg:#fbe9e7;
+  }
+  :root[data-theme="dark"] {
+    --bg:#0e131a; --surface:#161d26; --surface-2:#1c2531; --ink:#e7ebf2;
+    --muted:#98a3b2; --border:#28323f; --accent:#3ec7c2; --spine:#39485a;
+    --sent:#2bd08c; --suppressed:#e6bf46; --held:#6d9bff; --failed:#f0655b;
+    --sent-bg:#0f241c; --suppressed-bg:#241f0f; --held-bg:#121c30; --failed-bg:#2a1512;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width: 880px; margin:0 auto; padding: 48px 24px 72px; }
+
+  header { margin-bottom: 36px; }
+  .eyebrow {
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px;
+  }
+  h1 { font-size: clamp(1.55rem, 4vw, 2.1rem); line-height:1.15; margin:0 0 10px; text-wrap:balance; font-weight:650; }
+  .lede { color:var(--muted); max-width: 60ch; margin:0 0 22px; }
+
+  .legend { display:flex; flex-wrap:wrap; gap:8px 14px; }
+  .legend .k { display:inline-flex; align-items:center; gap:7px; font-size:.8rem; color:var(--muted); }
+  .legend .dot { width:11px; height:11px; border-radius:3px; }
+
+  /* spine */
+  .spine { display:flex; flex-direction:column; align-items:stretch; }
+  .conn { align-self:center; width:2px; height:24px; background:var(--spine); position:relative; }
+  .conn::after {
+    content:""; position:absolute; left:50%; bottom:-1px; transform:translateX(-50%);
+    border-left:5px solid transparent; border-right:5px solid transparent; border-top:6px solid var(--spine);
+  }
+  .conn .lbl {
+    position:absolute; left:12px; top:50%; transform:translateY(-50%);
+    font-family:var(--mono); font-size:.7rem; color:var(--muted); white-space:nowrap;
+  }
+
+  .node {
+    background:var(--surface); border:1px solid var(--border); border-radius:11px;
+    padding:13px 16px;
+  }
+  .node .t { font-family:var(--mono); font-size:.9rem; font-weight:600; color:var(--ink); }
+  .node .d { font-size:.82rem; color:var(--muted); margin-top:3px; }
+  .node.accent { border-color:color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .node.orch { background:var(--surface-2); border-color:var(--accent); }
+  .node.orch .t { color:var(--accent); }
+
+  .stage-label {
+    font-family:var(--mono); font-size:.72rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--muted); margin: 26px 0 12px;
+  }
+
+  /* gate rows: gate on the left spine, fail branch -> chip on the right */
+  .gate-row { display:grid; grid-template-columns: minmax(0,1fr) auto; align-items:center; gap:0; }
+  .gate {
+    background:var(--surface); border:1px solid var(--border); border-radius:11px;
+    padding:12px 16px; position:relative;
+  }
+  .gate .q { font-family:var(--mono); font-size:.88rem; font-weight:600; }
+  .gate .d { font-size:.8rem; color:var(--muted); margin-top:2px; }
+  .gate .core { display:inline-block; margin-top:6px; font-size:.7rem; font-family:var(--mono);
+    color:var(--accent); border:1px dashed var(--accent); border-radius:5px; padding:1px 6px; }
+
+  .branch { display:flex; align-items:center; gap:0; padding-left:6px; }
+  .branch .arm {
+    font-family:var(--mono); font-size:.7rem; color:var(--failed); white-space:nowrap;
+    display:flex; align-items:center; gap:6px; padding:0 8px;
+  }
+  .branch .arm::before { content:""; width:22px; height:2px; background:var(--failed); opacity:.5; }
+  .chip {
+    border-radius:9px; padding:9px 13px; border:1px solid; min-width:118px;
+  }
+  .chip .s { font-family:var(--mono); font-weight:700; font-size:.82rem; letter-spacing:.04em; }
+  .chip .cd { font-size:.72rem; color:var(--muted); margin-top:2px; }
+  .chip.sent { background:var(--sent-bg); border-color:var(--sent); }
+  .chip.sent .s { color:var(--sent); }
+  .chip.suppressed { background:var(--suppressed-bg); border-color:var(--suppressed); }
+  .chip.suppressed .s { color:var(--suppressed); }
+  .chip.held { background:var(--held-bg); border-color:var(--held); }
+  .chip.held .s { color:var(--held); }
+  .chip.failed { background:var(--failed-bg); border-color:var(--failed); }
+  .chip.failed .s { color:var(--failed); }
+  .pass { font-family:var(--mono); font-size:.7rem; color:var(--sent); }
+
+  /* side processes */
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(230px,1fr)); gap:14px; margin-top:14px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:15px 16px; }
+  .card h3 { margin:0 0 4px; font-size:.9rem; }
+  .card .tag { font-family:var(--mono); font-size:.68rem; color:var(--accent); letter-spacing:.06em; }
+  .card p { margin:8px 0 0; font-size:.82rem; color:var(--muted); }
+  .card code { font-family:var(--mono); font-size:.78em; background:var(--surface-2); padding:1px 5px; border-radius:4px; color:var(--ink); }
+
+  .db { margin-top:14px; background:var(--surface); border:1px solid var(--border); border-radius:11px; padding:16px 18px; }
+  .db h3 { margin:0 0 3px; font-size:.92rem; }
+  .db .tag { font-family:var(--mono); font-size:.68rem; color:var(--accent); }
+  .tables { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap:8px 18px; margin-top:12px; }
+  .tables .tbl { font-size:.8rem; display:flex; gap:8px; align-items:baseline; }
+  .tables .tbl b { font-family:var(--mono); font-weight:600; font-size:.82rem; color:var(--ink); }
+  .tables .tbl span { color:var(--muted); }
+
+  footer { margin-top:30px; padding-top:16px; border-top:1px solid var(--border); font-size:.78rem; color:var(--muted); }
+  footer code { font-family:var(--mono); background:var(--surface-2); padding:1px 5px; border-radius:4px; }
+
+  @media (max-width: 560px) {
+    .gate-row { grid-template-columns: 1fr; gap:8px; }
+    .branch { padding-left:0; }
+    .branch .arm::before { width:14px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Notification Service</p>
+    <h1>Message flow &amp; compliance pipeline</h1>
+    <p class="lede">A notification enters through the API, is accepted immediately, then runs an
+      async gate pipeline. Each compliance gate can end the message early — the core rule being
+      <strong>no contact within 3 days</strong>. Only messages that pass every gate are sent.</p>
+    <div class="legend">
+      <span class="k"><span class="dot" style="background:var(--sent)"></span>SENT / DELIVERED</span>
+      <span class="k"><span class="dot" style="background:var(--suppressed)"></span>SUPPRESSED (3-day rule)</span>
+      <span class="k"><span class="dot" style="background:var(--held)"></span>HELD (outside window)</span>
+      <span class="k"><span class="dot" style="background:var(--failed)"></span>FAILED / dropped</span>
+    </div>
+  </header>
+
+  <div class="stage-label">1 · Ingress — synchronous, returns 202</div>
+  <div class="spine">
+    <div class="node">
+      <div class="t">Client → POST /v1/notifications</div>
+      <div class="d">Header: <span style="font-family:var(--mono)">Authorization: Bearer &lt;JWT&gt;</span> · <span style="font-family:var(--mono)">Idempotency-Key</span></div>
+    </div>
+    <div class="conn"></div>
+    <div class="node">
+      <div class="t">TenantContextFilter</div>
+      <div class="d">Extracts <span style="font-family:var(--mono)">tenant_id</span> from the JWT (never the body). 401 if missing/invalid.</div>
+    </div>
+    <div class="conn"></div>
+    <div class="node accent">
+      <div class="t">NotificationController → NotificationSubmissionService</div>
+      <div class="d">Idempotent <span style="font-family:var(--mono)">INSERT notifications … ON CONFLICT DO NOTHING</span>, then enqueue. Responds <strong>202 Accepted</strong>.</div>
+    </div>
+    <div class="conn"><span class="lbl">enqueue</span></div>
+    <div class="node">
+      <div class="t">NotificationQueue</div>
+      <div class="d">Bounded in-JVM queue (replaces SQS for this build).</div>
+    </div>
+  </div>
+
+  <div class="stage-label">2 · Async processing</div>
+  <div class="spine">
+    <div class="node">
+      <div class="t">QueueWorker ×8</div>
+      <div class="d">Worker threads drain the queue; failures land in <span style="font-family:var(--mono)">dead_letter_messages</span>.</div>
+    </div>
+    <div class="conn"></div>
+    <div class="node orch">
+      <div class="t">NotificationOrchestrator.process() &nbsp;@Transactional</div>
+      <div class="d">Runs the gates below in order. State change + delivery log + outbox all commit in one transaction.</div>
+    </div>
+  </div>
+
+  <div class="stage-label">3 · Compliance gates — first failure wins</div>
+  <div class="spine">
+
+    <div class="conn"></div>
+    <div class="gate-row">
+      <div class="gate">
+        <div class="q">Opted out?</div>
+        <div class="d">Strong read of <span style="font-family:var(--mono)">consumer_preferences</span> (primary DB).</div>
+      </div>
+      <div class="branch"><span class="arm">✕ yes</span><div class="chip failed"><div class="s">FAILED</div><div class="cd">dropped</div></div></div>
+    </div>
+
+    <div class="conn"><span class="lbl">no ↓</span></div>
+    <div class="gate-row">
+      <div class="gate">
+        <div class="q">Contacted in the last 3 days?</div>
+        <div class="d">SuppressionService · index <span style="font-family:var(--mono)">idx_notifications_recent_contact</span></div>
+        <div class="core">core rule · per consumer, any channel</div>
+      </div>
+      <div class="branch"><span class="arm">✕ yes</span><div class="chip suppressed"><div class="s">SUPPRESSED</div><div class="cd">status = SUPPRESSED</div></div></div>
+    </div>
+
+    <div class="conn"><span class="lbl">no ↓</span></div>
+    <div class="gate-row">
+      <div class="gate">
+        <div class="q">Inside 08:00–21:00 (consumer-local)?</div>
+        <div class="d">FDCPA contact window, using <span style="font-family:var(--mono)">consumer_preferences.timezone</span>.</div>
+      </div>
+      <div class="branch"><span class="arm">✕ no</span><div class="chip held"><div class="s">HELD</div><div class="cd">scheduled_at = next 08:00</div></div></div>
+    </div>
+
+    <div class="conn"><span class="lbl">yes ↓</span></div>
+    <div class="gate-row">
+      <div class="gate">
+        <div class="q">Render template + mini-Miranda present?</div>
+        <div class="d">TemplateEngine → MiniMirandaValidator (post-render, mandatory).</div>
+      </div>
+      <div class="branch"><span class="arm">✕ no</span><div class="chip failed"><div class="s">FAILED</div><div class="cd">→ dead_letter_messages</div></div></div>
+    </div>
+
+    <div class="conn"><span class="lbl">pass all ↓</span></div>
+    <div class="node accent">
+      <div class="t">Send — SenderRegistry</div>
+      <div class="d">Simulated Twilio (SMS) / SendGrid (Email); returns a provider message id.</div>
+    </div>
+    <div class="conn"></div>
+    <div class="node">
+      <div class="t">Commit (same transaction)</div>
+      <div class="d"><span style="font-family:var(--mono)">status=SENT + sent_at</span> · <span style="font-family:var(--mono)">delivery_log(SENT)</span> · <span style="font-family:var(--mono)">outbox_events(NOTIFICATION_SENT)</span></div>
+    </div>
+    <div class="conn"></div>
+    <div class="gate-row">
+      <div class="gate" style="border-color:color-mix(in srgb, var(--sent) 55%, var(--border))">
+        <div class="q">Delivery receipt</div>
+        <div class="d">Simulated (or real webhook) → promotes to DELIVERED.</div>
+      </div>
+      <div class="branch"><span class="pass">→</span><div class="chip sent"><div class="s">SENT → DELIVERED</div><div class="cd">contact recorded</div></div></div>
+    </div>
+  </div>
+
+  <div class="stage-label">4 · Background processes</div>
+  <div class="cards">
+    <div class="card">
+      <span class="tag">every 60s</span>
+      <h3>NotificationScheduler</h3>
+      <p>Releases due <strong style="color:var(--held)">HELD</strong> messages: <code>claimHeld</code> with <code>FOR UPDATE SKIP LOCKED</code> (no double-release), then re-enqueues them back onto the queue.</p>
+    </div>
+    <div class="card">
+      <span class="tag">every 5s</span>
+      <h3>OutboxPoller</h3>
+      <p>Publishes pending <code>outbox_events</code> to the InProcessEventBus (Kafka stand-in), then marks them published. Publish-then-mark ordering.</p>
+    </div>
+    <div class="card">
+      <span class="tag">inbound</span>
+      <h3>Delivery webhooks</h3>
+      <p><code>POST /internal/webhooks/twilio|sendgrid</code> → WebhookController updates delivery state; idempotent via <code>provider_message_id</code>.</p>
+    </div>
+  </div>
+
+  <div class="stage-label">5 · Persistence</div>
+  <div class="db">
+    <span class="tag">Embedded PostgreSQL 16 · Zonky · Flyway V1–V7 · ./data/pg (persistent)</span>
+    <h3>All queries run through the repository layer</h3>
+    <div class="tables">
+      <div class="tbl"><b>notifications</b><span>lifecycle + status</span></div>
+      <div class="tbl"><b>consumer_preferences</b><span>opt-out, timezone</span></div>
+      <div class="tbl"><b>templates</b><span>body + mini-Miranda</span></div>
+      <div class="tbl"><b>delivery_log</b><span>append-only sends</span></div>
+      <div class="tbl"><b>outbox_events</b><span>event stream</span></div>
+      <div class="tbl"><b>dead_letter_messages</b><span>failed work</span></div>
+    </div>
+  </div>
+
+  <footer>
+    Three entry points drive the same orchestrator: the REST API (JWT-authenticated), the bundled
+    TUI (<code>java -jar notification-service.jar tui</code>), and the demo endpoints
+    (<code>/internal/seed</code> · <code>/internal/demo/load</code>).
+  </footer>
+</div>

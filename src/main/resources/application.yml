@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: notification-service
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  mvc:
+    problemdetails:
+      enabled: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.notification: INFO
+    io.zonky.test.db.postgres: INFO
+
+notification:
+  db:
+    data-dir: ./data/pg
+    port: 54329
+    pool-size: 20
+  suppression:
+    window-days: 3
+  fdcpa:
+    window-start: "08:00"
+    window-end: "21:00"
+  sender:
+    delivered-probability: 0.9
+  queue:
+    workers: 8
+    capacity: 100000
+  jwt:
+    # Dev-only HS256 signing key. Override via NOTIFICATION_JWT_SECRET in production.
+    secret: "dev-secret-please-change-me-0000000000000000000000"
+  dev:
+    token-endpoint-enabled: true

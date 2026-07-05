@@ -1,0 +1,23 @@
+spring:
+  main:
+    # Allow the test @Primary MutableClock to override the app's Clock bean.
+    allow-bean-definition-overriding: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+# Tests run on their own embedded-postgres cluster under target/ (wiped by `mvn clean`),
+# on a separate port so they never collide with a running app instance on 54329.
+notification:
+  db:
+    data-dir: ./target/test-pg
+    port: 54331
+    pool-size: 8
+  queue:
+    workers: 2
+  suppression:
+    window-days: 3
+
+logging:
+  level:
+    io.zonky.test.db.postgres: WARN

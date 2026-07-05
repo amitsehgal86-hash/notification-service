@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Project-local Maven settings for building this app anywhere (plug-and-play).
+
+  All of this app's dependencies (Spring Boot, Zonky embedded-postgres, Flyway, PostgreSQL
+  driver, jjwt) are public and live on Maven Central. This settings file mirrors ALL
+  repositories to Maven Central so the build:
+    * does not depend on any corporate/private mirror, and
+    * never pays the slow "try private mirror, 403/404, then fall back" penalty.
+
+  Build with:   mvn -s build-settings.xml clean package
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd">
+    <mirrors>
+        <mirror>
+            <id>maven-central-direct</id>
+            <name>Direct Maven Central (bypass private mirrors)</name>
+            <url>https://repo1.maven.org/maven2</url>
+            <mirrorOf>*</mirrorOf>
+        </mirror>
+    </mirrors>
+</settings>
