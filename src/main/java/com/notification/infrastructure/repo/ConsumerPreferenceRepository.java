@@ -73,6 +73,37 @@ public class ConsumerPreferenceRepository {
                 .addValue("emailEnabled", p.emailEnabled()));
     }
 
+    /**
+     * Returns up to {@code limit} consumer IDs that are eligible to receive a notification right now:
+     * not opted out, timezone currently within the FDCPA window, and not contacted within the
+     * suppression window. All three filters are evaluated in a single DB query so the orchestrator
+     * handles only consumers that are genuinely ready.
+     */
+    public List<UUID> findEligibleConsumerIds(UUID tenantId, List<String> openTimezones,
+                                              Instant since, int limit) {
+        if (openTimezones.isEmpty()) return List.of();
+        return jdbc.query("""
+                SELECT cp.consumer_id
+                FROM consumer_preferences cp
+                WHERE cp.tenant_id = :tenantId
+                  AND cp.opted_out = false
+                  AND cp.timezone IN (:openTimezones)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM notifications n
+                      WHERE n.tenant_id = cp.tenant_id
+                        AND n.consumer_id = cp.consumer_id
+                        AND n.status IN ('SENT', 'DELIVERED')
+                        AND n.sent_at > :since
+                  )
+                LIMIT :limit
+                """, new MapSqlParameterSource()
+                .addValue("tenantId", tenantId)
+                .addValue("openTimezones", openTimezones)
+                .addValue("since", since.atOffset(ZoneOffset.UTC))
+                .addValue("limit", limit),
+                (rs, n) -> rs.getObject("consumer_id", UUID.class));
+    }
+
     /** Synchronous strong write — opt-out is FDCPA-critical, no eventual consistency. */
     public boolean optOut(UUID tenantId, UUID consumerId, String via, Instant at) {
         int rows = jdbc.update("""

@@ -1,5 +1,7 @@
 package com.notification.domain;
 
+import com.notification.config.NotificationProperties;
+import com.notification.infrastructure.repo.ConsumerPreferenceRepository;
 import com.notification.infrastructure.repo.NotificationRepository;
 import com.notification.infrastructure.repo.SeedRepository;
 import com.notification.infrastructure.repo.TemplateRepository;
@@ -11,6 +13,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +40,11 @@ public class DemoService {
     /** Default demo tenant used when a caller doesn't supply one. */
     public static final UUID DEMO_TENANT = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
+    /** Must match the timezones used in SeedRepository.seedConsumers(). */
+    private static final List<String> SEEDED_TIMEZONES = List.of(
+            "America/New_York", "America/Chicago", "America/Denver",
+            "America/Phoenix", "America/Los_Angeles");
+
     private static final String DEFAULT_TEMPLATE_NAME = "demo-collection-sms";
     private static final String DEFAULT_TEMPLATE_BODY =
             "This is an attempt to collect a debt and any information obtained will be used for that "
@@ -41,18 +53,24 @@ public class DemoService {
     private final SeedRepository seedRepository;
     private final TemplateRepository templateRepository;
     private final NotificationRepository notificationRepository;
+    private final ConsumerPreferenceRepository preferenceRepository;
     private final NotificationOrchestrator orchestrator;
+    private final NotificationProperties props;
     private final Clock clock;
 
     public DemoService(SeedRepository seedRepository,
                        TemplateRepository templateRepository,
                        NotificationRepository notificationRepository,
+                       ConsumerPreferenceRepository preferenceRepository,
                        NotificationOrchestrator orchestrator,
+                       NotificationProperties props,
                        Clock clock) {
         this.seedRepository = seedRepository;
         this.templateRepository = templateRepository;
         this.notificationRepository = notificationRepository;
+        this.preferenceRepository = preferenceRepository;
         this.orchestrator = orchestrator;
+        this.props = props;
         this.clock = clock;
     }
 
@@ -138,5 +156,102 @@ public class DemoService {
                 "failed", tally.get(ProcessOutcome.FAILED).sum(),
                 "elapsedMs", elapsed,
                 "throughputPerSec", Math.round(perSec));
+    }
+
+    /**
+     * Smart load: query the DB upfront to find only consumers who are eligible right now —
+     * not opted out, timezone within the FDCPA window, and not contacted within the suppression
+     * window. The orchestrator still runs as the authoritative gate, but with pre-filtered
+     * consumers the vast majority should reach SENT.
+     */
+    public Map<String, Object> runSmartLoad(UUID tenantId, int limit, int threads) {
+        UUID templateId = ensureDefaultTemplate(tenantId);
+        Instant now = clock.instant();
+
+        // Timezones currently within the FDCPA contact window (08:00–18:00 local).
+        LocalTime windowStart = props.getFdcpa().getWindowStart();
+        LocalTime windowEnd   = props.getFdcpa().getWindowEnd();
+        List<String> openTimezones = SEEDED_TIMEZONES.stream()
+                .filter(tz -> {
+                    LocalTime local = LocalTime.ofInstant(now, ZoneId.of(tz));
+                    return !local.isBefore(windowStart) && local.isBefore(windowEnd);
+                })
+                .toList();
+
+        // Suppression cutoff: only consumers with no SENT/DELIVERED notification after this.
+        Instant since = now.minus(Duration.ofDays(props.getSuppression().getWindowDays()));
+
+        // Single DB query combining all three filters.
+        List<UUID> consumers = preferenceRepository.findEligibleConsumerIds(tenantId, openTimezones, since, limit);
+        int eligibleFound = consumers.size();
+
+        if (consumers.isEmpty()) {
+            String reason = openTimezones.isEmpty()
+                    ? "All timezones are outside the FDCPA window — no consumers eligible right now."
+                    : "No unsuppressed, non-opted-out consumers found in open timezones.";
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("tenantId", tenantId);
+            empty.put("open_timezones", openTimezones);
+            empty.put("eligible_found", 0);
+            empty.put("message", reason);
+            empty.put("requested", limit);
+            empty.put("processed", 0);
+            empty.put("sent", 0L);
+            empty.put("suppressed_3day", 0L);
+            empty.put("held_outside_window", 0L);
+            empty.put("opted_out", 0L);
+            empty.put("failed", 0L);
+            empty.put("elapsedMs", 0L);
+            empty.put("throughputPerSec", 0L);
+            return empty;
+        }
+
+        Map<ProcessOutcome, LongAdder> tally = new ConcurrentHashMap<>();
+        for (ProcessOutcome o : ProcessOutcome.values()) tally.put(o, new LongAdder());
+
+        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, threads));
+        long start = clock.millis();
+        try {
+            for (UUID consumerId : consumers) {
+                pool.submit(() -> {
+                    try {
+                        var ins = notificationRepository.insertIfAbsent(
+                                tenantId, consumerId, templateId, Channel.SMS,
+                                UUID.randomUUID().toString(), null);
+                        ProcessOutcome outcome = orchestrator.process(new NotificationRequest(
+                                ins.id(), tenantId, consumerId, templateId, Channel.SMS,
+                                Map.of("amount", "$100.00")));
+                        tally.get(outcome).increment();
+                    } catch (Exception e) {
+                        tally.get(ProcessOutcome.FAILED).increment();
+                    }
+                });
+            }
+            pool.shutdown();
+            pool.awaitTermination(10, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            pool.shutdownNow();
+        }
+        long elapsed = clock.millis() - start;
+        double perSec = elapsed > 0 ? (eligibleFound * 1000.0 / elapsed) : 0;
+
+        log.info("Smart load: {} eligible → {} processed in {} ms (open zones: {})",
+                eligibleFound, eligibleFound, elapsed, openTimezones);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tenantId", tenantId);
+        result.put("open_timezones", openTimezones);
+        result.put("eligible_found", eligibleFound);
+        result.put("requested", limit);
+        result.put("processed", eligibleFound);
+        result.put("sent", tally.get(ProcessOutcome.SENT).sum());
+        result.put("suppressed_3day", tally.get(ProcessOutcome.SUPPRESSED).sum());
+        result.put("held_outside_window", tally.get(ProcessOutcome.HELD).sum());
+        result.put("opted_out", tally.get(ProcessOutcome.OPTED_OUT).sum());
+        result.put("failed", tally.get(ProcessOutcome.FAILED).sum());
+        result.put("elapsedMs", elapsed);
+        result.put("throughputPerSec", Math.round(perSec));
+        return result;
     }
 }

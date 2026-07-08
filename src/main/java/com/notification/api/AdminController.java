@@ -61,6 +61,19 @@ public class AdminController {
         return demoService.runLoad(tid, count, threads);
     }
 
+    /**
+     * Smart load: pre-filters eligible consumers at the DB layer (opted-out=false, FDCPA window
+     * open, not suppressed) before pushing through the orchestrator.
+     */
+    @PostMapping("/smart-load")
+    public Map<String, Object> smartLoad(
+            @RequestParam(value = "tenantId", required = false) UUID tenantId,
+            @RequestParam(value = "limit", defaultValue = "50000") int limit,
+            @RequestParam(value = "threads", defaultValue = "16") int threads) {
+        UUID tid = tenantId != null ? tenantId : DemoService.DEMO_TENANT;
+        return demoService.runSmartLoad(tid, limit, threads);
+    }
+
     @GetMapping("/stats")
     public Map<String, Object> stats(@RequestParam(value = "tenantId", required = false) UUID tenantId) {
         UUID tid = tenantId != null ? tenantId : DemoService.DEMO_TENANT;
