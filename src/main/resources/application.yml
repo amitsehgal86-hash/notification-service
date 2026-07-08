@@ -34,7 +34,7 @@ notification:
     window-days: 3
   fdcpa:
     window-start: "08:00"
-    window-end: "21:00"
+    window-end: "18:00"
   sender:
     delivered-probability: 0.9
   queue:

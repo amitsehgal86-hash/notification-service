@@ -69,7 +69,7 @@
         <div class="bg-slate-900 border border-slate-700 rounded-none p-4">
           <div class="text-xs text-slate-500 mb-1">Step 3</div>
           <div class="text-sm font-bold text-violet-400 mb-1">FDCPA Window</div>
-          <div class="text-xs text-slate-400">Contact only 08:00–21:00 in the consumer's local timezone. HELD if outside window.</div>
+          <div class="text-xs text-slate-400">Contact only 08:00–18:00 in the consumer's local timezone. HELD if outside window.</div>
           <div class="mt-2 text-xs text-slate-600">→ no DB</div>
         </div>
 
@@ -91,6 +91,19 @@
           <span class="text-slate-300 text-sm font-mono">CREATE INDEX idx_notifications_recent_contact ON notifications (tenant_id, consumer_id, sent_at DESC) WHERE status IN ('SENT', 'DELIVERED')</span>
           <div class="text-xs text-slate-500 mt-1">Partial index — only indexes rows that matter. Composite order matches the query exactly: tenant → consumer → recency. Postgres satisfies the EXISTS with an index-only scan.</div>
         </div>
+      </div>
+
+      <!-- FDCPA Window Status -->
+      <div class="mt-4 bg-slate-900 border border-violet-800/50 rounded-lg p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs uppercase tracking-widest text-slate-500">FDCPA Contact Window</span>
+            <span class="text-xs font-bold text-violet-300 bg-violet-900/50 border border-violet-700 px-2 py-0.5 rounded">08:00 – 18:00</span>
+          </div>
+          <span class="text-xs text-slate-600">updates every 30s · consumers are seeded across all 5 zones</span>
+        </div>
+        <div class="grid grid-cols-5 gap-2" id="tz-grid"></div>
+        <div class="mt-2 text-xs text-slate-600">Notifications sent to consumers in a CLOSED timezone are held until 08:00 local time next day → reflected in <span class="text-violet-400">FDCPA Hold</span> count in load test results.</div>
       </div>
     </section>
 
@@ -441,6 +454,48 @@ function showResults(d) {
   document.getElementById('result-meta').textContent =
     `Requested: ${fmt(d.requested)}  ·  Processed: ${fmt(d.processed)}  ·  Threads: 16`;
 }
+
+// ── FDCPA Timezone Grid ────────────────────────────────────────────────────
+const WINDOW_START_H = 8, WINDOW_END_H = 18;
+const TZ_LIST = [
+  { id: 'America/New_York',    label: 'ET', city: 'New York'   },
+  { id: 'America/Chicago',     label: 'CT', city: 'Chicago'    },
+  { id: 'America/Denver',      label: 'MT', city: 'Denver'     },
+  { id: 'America/Phoenix',     label: 'AZ', city: 'Phoenix'    },
+  { id: 'America/Los_Angeles', label: 'PT', city: 'Los Angeles'},
+];
+
+function tzNow(tz) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false
+  }).format(new Date());
+}
+
+function tzInWindow(tz) {
+  const [h, m] = tzNow(tz).split(':').map(Number);
+  const mins = h * 60 + m;
+  return mins >= WINDOW_START_H * 60 && mins < WINDOW_END_H * 60;
+}
+
+function renderTzGrid() {
+  const grid = document.getElementById('tz-grid');
+  grid.innerHTML = TZ_LIST.map(z => {
+    const open = tzInWindow(z.id);
+    const border = open ? 'border-emerald-700' : 'border-red-800';
+    const bg     = open ? 'bg-emerald-950/30'  : 'bg-red-950/30';
+    const badge  = open
+      ? '<span class="text-emerald-400 font-bold">● OPEN</span>'
+      : '<span class="text-red-400 font-bold">● CLOSED</span>';
+    return `
+      <div class="${bg} border ${border} rounded-lg p-3 text-center">
+        <div class="text-xs text-slate-400 mb-0.5">${z.label} · ${z.city}</div>
+        <div class="text-lg font-bold text-white font-mono">${tzNow(z.id)}</div>
+        <div class="text-xs mt-1">${badge}</div>
+      </div>`;
+  }).join('');
+}
+renderTzGrid();
+setInterval(renderTzGrid, 30000);
 
 // ── Recent Sends ───────────────────────────────────────────────────────────
 const STATUS_BADGE = {
