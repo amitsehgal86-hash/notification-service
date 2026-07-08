@@ -47,7 +47,7 @@ Produces `target/notification-service.jar`.
 java -jar target/notification-service.jar
 ```
 
-- App:            http://localhost:8080
+- **Dashboard:**   http://localhost:8080 — pipeline diagram, live timezone status, demo controls, query timing, recent-sends inspector
 - Embedded PG:    localhost:54329 (db `postgres`, user `postgres`)
 - Health:         http://localhost:8080/actuator/health
 
@@ -91,24 +91,26 @@ curl -sX POST "http://localhost:8080/internal/seed?consumers=1000000&historyFrac
 # 2) Confirm scale
 curl -s "http://localhost:8080/internal/stats" | jq
 
-# 3) Push 50,000 notifications through the pipeline and see the outcome split:
-#    sent vs suppressed_3day vs held_outside_window vs opted_out vs failed
-curl -sX POST "http://localhost:8080/internal/demo/load?count=50000" | jq
+# 3) Smart load: DB pre-filters eligible consumers (not opted-out, FDCPA window open, not suppressed
+#    in 3 days) then pushes only those through the orchestrator.
+curl -sX POST "http://localhost:8080/internal/smart-load?limit=50000" | jq
 ```
 
-Example load result:
+Example smart-load result:
 
 ```json
 {
+  "open_timezones": ["America/New_York", "America/Chicago", "America/Denver"],
+  "eligible_found": 18420,
   "requested": 50000,
-  "processed": 50000,
-  "sent": 33210,
-  "suppressed_3day": 14880,
-  "held_outside_window": 990,
-  "opted_out": 920,
+  "processed": 18420,
+  "sent": 18104,
+  "suppressed_3day": 112,
+  "held_outside_window": 142,
+  "opted_out": 62,
   "failed": 0,
-  "elapsedMs": 8123,
-  "throughputPerSec": 6155
+  "elapsedMs": 4201,
+  "throughputPerSec": 4385
 }
 ```
 
@@ -141,14 +143,16 @@ curl -s http://localhost:8080/v1/notifications/<ID> -H "Authorization: Bearer $T
 | POST | `/internal/webhooks/twilio` \| `/sendgrid` | delivery receipts (idempotent) |
 | GET  | `/dev/token?tenantId=` | mint a tenant JWT (dev only) |
 | POST | `/internal/seed` | bulk seed consumers/template/history |
-| POST | `/internal/demo/load` | throughput demo with outcome summary |
+| POST | `/internal/smart-load` | pre-filter eligible consumers at DB layer then notify |
 | GET  | `/internal/stats` | row counts |
+| GET  | `/internal/timing` | Micrometer timer stats for suppression query, suppression check, orchestrator |
+| GET  | `/internal/recent-sends` | latest SENT/DELIVERED rows with raw DB query time |
 
 ## Compliance / correctness features (from the spec, adapted)
 
 - **3-day contact suppression** (the added core rule) — first gate after opt-out.
 - **Opt-out** checked first, strong read from the primary DB.
-- **FDCPA 8am–9pm window** in the consumer's local timezone → otherwise **HELD** and released by the
+- **FDCPA 8am–6pm window** in the consumer's local timezone → otherwise **HELD** and released by the
   scheduler at the next local 8am.
 - **Mini-Miranda** validated post-render (`MiniMirandaValidator`); non-compliant messages are never sent.
 - **Idempotency** everywhere via `ON CONFLICT` (`notifications`, `templates`, `delivery_log`,
@@ -174,7 +178,7 @@ suppressed, HELD, missing-Miranda, happy path), idempotent insert, and a `claimH
 | `db.data-dir` | `./data/pg` | embedded Postgres data dir (persistent) |
 | `db.port` | `54329` | embedded Postgres port |
 | `suppression.window-days` | `3` | the contact-suppression window |
-| `fdcpa.window-start` / `window-end` | `08:00` / `21:00` | contact window |
+| `fdcpa.window-start` / `window-end` | `08:00` / `18:00` | contact window |
 | `sender.delivered-probability` | `0.9` | simulated delivery success rate |
 | `queue.workers` | `8` | in-JVM async processor threads |
 | `jwt.secret` | dev key | HS256 signing key (override in prod) |

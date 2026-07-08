@@ -14,9 +14,12 @@
 On first start it extracts the embedded Postgres and creates ./data/pg (persists across restarts).
 
 ## Demo
+Open **http://localhost:8080** in a browser for the interactive dashboard (pipeline diagram, timezone status, query timing, recent-sends inspector).
+
+Or via curl:
 ```bash
 curl -sX POST "http://localhost:8080/internal/seed?consumers=1000000&historyFraction=0.3"
-curl -sX POST "http://localhost:8080/internal/demo/load?count=50000"   # run twice to see the 3-day rule
+curl -sX POST "http://localhost:8080/internal/smart-load?limit=50000"   # pre-filters eligible consumers at DB layer
 ```
 
 ## Rebuild from source (optional; needs Maven + network the first time)

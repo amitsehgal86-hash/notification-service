@@ -21,7 +21,7 @@ flowchart TD
   G1 -->|yes| FAIL1[["FAILED (drop)"]]
   G1 -->|no| G2{"contacted in last 3 days?<br/>SuppressionService"}
   G2 -->|yes| SUP[["SUPPRESSED"]]
-  G2 -->|no| G3{"inside 08:00-21:00<br/>consumer-local time?"}
+  G2 -->|no| G3{"inside 08:00-18:00<br/>consumer-local time?"}
   G3 -->|no| HELD[["HELD<br/>scheduled_at = next 08:00"]]
   G3 -->|yes| G4{"render + mini-Miranda present?"}
   G4 -->|no| FAIL2[["FAILED -> dead_letter_messages"]]
