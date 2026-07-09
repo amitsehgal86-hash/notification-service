@@ -17,11 +17,13 @@ flowchart TD
   W --> O{{"NotificationOrchestrator.process()  @Transactional"}}
 
   %% ---------- Compliance gate ladder ----------
-  O --> G1{"opted_out?"}
+  O --> PREFS["preferenceRepository.find()<br/>single DB read: opted_out + timezone"]
+  PREFS --> G1{"opted_out?"}
   G1 -->|yes| FAIL1[["FAILED (drop)"]]
   G1 -->|no| G2{"contacted in last 3 days?<br/>SuppressionService"}
   G2 -->|yes| SUP[["SUPPRESSED"]]
-  G2 -->|no| G3{"inside 08:00-18:00<br/>consumer-local time?"}
+  G2 -->|no| G3{"inside 08:00-18:00<br/>consumer-local time?<br/>(timezone from PREFS read)"}
+
   G3 -->|no| HELD[["HELD<br/>scheduled_at = next 08:00"]]
   G3 -->|yes| G4{"render + mini-Miranda present?"}
   G4 -->|no| FAIL2[["FAILED -> dead_letter_messages"]]
