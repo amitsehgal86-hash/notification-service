@@ -239,7 +239,7 @@
       <div class="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 class="text-xs uppercase tracking-widest text-slate-500">Recent Sends — DB Query Inspector</h2>
-          <p class="text-xs text-slate-500 mt-1">Measures the raw time to fetch rows from the notifications table at scale.</p>
+          <p class="text-xs text-slate-500 mt-1">Query shape: <span class="font-mono text-slate-400">WHERE tenant_id = ? AND status IN (...) ORDER BY sent_at DESC</span>. The suppression index is on <span class="font-mono text-slate-400">(tenant_id, consumer_id, sent_at)</span> — consumer_id sits between tenant and sent_at, so this query cannot use it for ORDER BY. Shows what happens when index shape doesn't match query shape.</p>
         </div>
         <div class="flex items-center gap-2">
           <label class="text-xs text-slate-400">Rows:</label>
