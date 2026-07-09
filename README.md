@@ -96,23 +96,25 @@ curl -s "http://localhost:8080/internal/stats" | jq
 curl -sX POST "http://localhost:8080/internal/smart-load?limit=50000" | jq
 ```
 
-Example smart-load result:
+Example smart-load result (all 5 US zones open, midday run):
 
 ```json
 {
-  "open_timezones": ["America/New_York", "America/Chicago", "America/Denver"],
-  "eligible_found": 18420,
+  "open_timezones": ["America/New_York","America/Chicago","America/Denver","America/Phoenix","America/Los_Angeles"],
+  "eligible_found": 50000,
   "requested": 50000,
-  "processed": 18420,
-  "sent": 18104,
-  "suppressed_3day": 112,
-  "held_outside_window": 142,
-  "opted_out": 62,
+  "processed": 50000,
+  "sent": 50000,
+  "suppressed_3day": 0,
+  "held_outside_window": 0,
+  "opted_out": 0,
   "failed": 0,
-  "elapsedMs": 4201,
-  "throughputPerSec": 4385
+  "elapsedMs": 4226,
+  "throughputPerSec": 11832
 }
 ```
+
+Run after 18:00 ET to see East Coast consumers produce `held_outside_window > 0`.
 
 ### Exercising the API directly (tenant from JWT)
 
@@ -150,15 +152,17 @@ curl -s http://localhost:8080/v1/notifications/<ID> -H "Authorization: Bearer $T
 
 ## Compliance / correctness features (from the spec, adapted)
 
-- **3-day contact suppression** (the added core rule) — first gate after opt-out.
-- **Opt-out** checked first, strong read from the primary DB.
-- **FDCPA 8am–6pm window** in the consumer's local timezone → otherwise **HELD** and released by the
-  scheduler at the next local 8am.
-- **Mini-Miranda** validated post-render (`MiniMirandaValidator`); non-compliant messages are never sent.
+The orchestrator runs each notification through a compliance gate ladder in order. Two DB reads happen per notification — the rest is in-memory:
+
+| Step | Check | DB? |
+|------|-------|-----|
+| 1 | **Opt-out + timezone** — single `SELECT` from `consumer_preferences`. Loads `opted_out` and `timezone` together; both reused downstream. Strong read, no eventual consistency. | ✅ 1 read |
+| 2 | **3-day suppression** — `SELECT EXISTS` on `notifications` using the partial composite index. Avg **0.10 ms** at 4M+ rows. | ✅ 1 read |
+| 3 | **FDCPA 8am–6pm window** — converts current instant to the consumer's local timezone (loaded in Step 1) and checks the window. Pure time arithmetic, no extra DB round-trip. HELD if outside window. | ❌ in-memory |
+| 4–5 | **Template render + mini-Miranda** — renders the body, validates the FDCPA mini-Miranda clause. Send via simulated Twilio/SendGrid. Committed via transactional outbox. | ✅ template read |
+
 - **Idempotency** everywhere via `ON CONFLICT` (`notifications`, `templates`, `delivery_log`,
   `outbox_events`, `consumer_preferences`).
-- **Transactional outbox** — every send writes an `outbox_events` row in the same transaction;
-  `OutboxPoller` publishes to the (in-process) event bus.
 - **HELD release** uses `FOR UPDATE SKIP LOCKED` so multiple instances never double-release.
 
 ## Tests

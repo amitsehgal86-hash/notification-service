@@ -48,8 +48,8 @@
         <div class="bg-slate-900 border border-slate-700 rounded-l-lg p-4">
           <div class="text-xs text-slate-500 mb-1">Step 1</div>
           <div class="text-sm font-bold text-blue-400 mb-1">Opt-out Check</div>
-          <div class="text-xs text-slate-400">Synchronous read from consumer_preferences. FDCPA-critical — no eventual consistency.</div>
-          <div class="mt-2 text-xs text-slate-600">→ DB read</div>
+          <div class="text-xs text-slate-400">Single strong read from consumer_preferences. Loads opted_out <em>and</em> timezone together — both reused downstream. No eventual consistency.</div>
+          <div class="mt-2 text-xs text-slate-600">→ 1 DB read · serves Steps 1 &amp; 3</div>
         </div>
 
         <!-- Arrow -->
@@ -69,8 +69,8 @@
         <div class="bg-slate-900 border border-slate-700 rounded-none p-4">
           <div class="text-xs text-slate-500 mb-1">Step 3</div>
           <div class="text-sm font-bold text-violet-400 mb-1">FDCPA Window</div>
-          <div class="text-xs text-slate-400">Contact only 08:00–18:00 in the consumer's local timezone. HELD if outside window.</div>
-          <div class="mt-2 text-xs text-slate-600">→ timezone from Step 1 read · pure time arithmetic</div>
+          <div class="text-xs text-slate-400">Contact only 08:00–18:00 in the consumer's local timezone. HELD if outside window. Timezone was loaded in Step 1 — no extra DB call here.</div>
+          <div class="mt-2 text-xs text-slate-600">→ in-memory timezone · pure time arithmetic</div>
         </div>
 
         <!-- Step 4+5 -->
